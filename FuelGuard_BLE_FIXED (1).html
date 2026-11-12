@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FuelGuard BLE — ESP32 Flow &amp; Pump Auditor</title>
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            slate: {
+              800: '#1F2937',
+              850: '#161E2E',
+              900: '#111827',
+              950: '#0B0F19',
+            }
+          },
+          animation: {
+            'pulse-fast': 'pulse 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* Industrial Dark Slate (#0B0F19) & Surface (#111827) Telemetry Theme */
+    body {
+      background-color: #0B0F19;
+      background-image:
+        radial-gradient(circle at 15% 0%, rgba(16, 185, 129, 0.06), transparent 35%),
+        radial-gradient(circle at 85% 10%, rgba(56, 189, 248, 0.05), transparent 35%),
+        linear-gradient(rgba(31, 41, 55, 0.25) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(31, 41, 55, 0.25) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px;
+      color: #f1f5f9;
+    }
+
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .glass-card {
+      background: linear-gradient(180deg, rgba(17, 24, 39, 0.96) 0%, rgba(11, 15, 25, 0.98) 100%);
+      border: 1px solid #1F2937;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(12px);
+    }
+
+    /* Custom subtle scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+
+    /* Range input styling */
+    input[type="range"] {
+      accent-color: #10b981;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-emerald-500/30 selection:text-emerald-200">
+
+  <!-- Toast Notification Container (Replaces alert()) -->
+  <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+
+  <!-- Top Industrial Header & Dual Connection Status Bar -->
+  <header class="sticky top-0 z-40 border-b border-[#1F2937] bg-[#0B0F19]/95 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
+      <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3.5">
+
+        <!-- Brand & Tab Switcher -->
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shadow-lg shadow-emerald-950/60 border border-emerald-400/30 shrink-0">
+              <!-- Fuel Nozzle + Pulse Wave SVG Icon -->
+              <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 22V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16" />
+                <path d="M2 22h14" />
+                <path d="M6 9h6" />
+                <path d="M15 8h2a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2v0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L19 5" />
+                <path d="M6 15h2l1-2 2 4 1-2h1" />
+              </svg>
+            </div>
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h1 class="text-base sm:text-lg font-extrabold tracking-tight text-white">
+                  FuelGuard <span class="text-emerald-400">BLE</span>
+                </h1>
+                <span class="hidden sm:inline-block text-xs font-medium text-slate-400">— ESP32 Flow &amp; Pump Auditor</span>
+              </div>
+              <!-- Desktop Navigation Tabs -->
+              <div class="hidden lg:flex items-center gap-1.5 mt-1">
+                <button type="button" data-tab="dashboard" class="tab-btn px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#111827] text-white border border-[#1F2937] transition flex items-center gap-1.5 cursor-pointer">
+                  <svg class="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                    <rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                  </svg>
+                  Live Audit Dashboard
+                </button>
+                <button type="button" data-tab="firmware" class="tab-btn px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white border border-transparent transition flex items-center gap-1.5 cursor-pointer">
+                  <svg class="w-3.5 h-3.5 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                  </svg>
+                  ESP32 Firmware &amp; Wiring
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Mobile View Switcher -->
+          <div class="flex lg:hidden rounded-xl bg-[#111827] p-1 border border-[#1F2937]">
+            <button type="button" data-tab="dashboard" class="tab-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-white transition">
+              Dashboard
+            </button>
+            <button type="button" data-tab="firmware" class="tab-btn px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition">
+              Firmware
+            </button>
+          </div>
+        </div>
+
+        <!-- Right Status Pills (ESP32 BLE Pill + Water Flow Sensor Pill) & Action Controls -->
+        <div class="flex flex-wrap items-center gap-2 sm:gap-2.5">
+
+          <!-- PILL A: ESP32 BLE Connection Status Pill -->
+          <div id="ble-status-pill" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[#111827] border border-[#1F2937] text-xs font-mono">
+            <span id="conn-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+            <span id="conn-status-text" class="text-slate-300 font-semibold">BLE: Disconnected</span>
+            <span id="device-name-badge" class="hidden text-[11px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700"></span>
+          </div>
+
+          <!-- PILL B: Dedicated Water Flow Sensor Status Indicator Pill -->
+          <div id="sensor-status-pill" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[#111827] border border-[#1F2937] text-xs font-mono transition-all duration-300">
+            <span id="sensor-pill-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+            <!-- Sensor Wave Icon (shown when standby/connected) -->
+            <svg id="sensor-wave-icon" class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12h3l2-5 4 10 4-10 2 5h5"/>
+            </svg>
+            <!-- Sensor Warning Icon (shown when disconnected/fault) -->
+            <svg id="sensor-warn-icon" class="hidden w-4 h-4 text-red-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span id="sensor-status-text" class="text-slate-400 font-semibold">Flow Sensor: Standby</span>
+          </div>
+
+          <!-- Connect / Disconnect ESP32 BLE Button -->
+          <button id="btn-connect-ble" type="button" class="min-h-[38px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-lg shadow-emerald-950/50 border border-emerald-400/30 transition flex items-center gap-2 cursor-pointer">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/>
+            </svg>
+            <span id="btn-connect-label">Connect ESP32</span>
+          </button>
+
+          <!-- Simulator Mode Toggle Button -->
+          <button id="btn-simulate" type="button" class="min-h-[38px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-[#111827] hover:bg-slate-800 text-sky-300 border border-sky-500/30 transition flex items-center gap-2 cursor-pointer">
+            <svg class="w-4 h-4 shrink-0 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <span id="btn-simulate-label">Simulator Mode</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Simulator Sub-Controls Bar (Start Pump, Pause, Reset Session, Scam Toggle, Air Bubble, Sensor Toggle) -->
+      <div id="simulator-bar" class="hidden mt-3 pt-3 border-t border-[#1F2937] flex flex-wrap items-center justify-between gap-2.5">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="inline-flex items-center gap-1.5 text-xs font-mono font-semibold text-sky-400 bg-sky-950/60 border border-sky-500/30 px-2.5 py-1.5 rounded-xl">
+            <span id="sim-active-dot" class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
+            SIMULATOR
+          </span>
+
+          <!-- Start Pump Button -->
+          <button id="btn-sim-start" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition flex items-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Start Pump
+          </button>
+
+          <!-- Pause Pump Button -->
+          <button id="btn-sim-pause" type="button" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#111827] hover:bg-slate-800 text-amber-300 border border-amber-500/30 transition flex items-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            Pause
+          </button>
+
+          <!-- Reset Session Button -->
+          <button id="btn-reset" type="button" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#111827] hover:bg-slate-800 text-slate-300 border border-[#1F2937] transition flex items-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+            </svg>
+            Reset Session
+          </button>
+
+          <!-- Simulate Scam (-8% Short) Toggle -->
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none bg-[#111827] px-3 py-1.5 rounded-xl border border-[#1F2937] hover:border-red-500/40 transition">
+            <input id="toggle-sim-scam" type="checkbox" class="w-3.5 h-3.5 rounded accent-red-500 cursor-pointer" />
+            <span class="text-xs font-semibold text-slate-200">Simulate Scam <span class="text-red-400 font-mono">(-8% Short)</span></span>
+          </label>
+
+          <!-- Inject Air Bubble Spike Button -->
+          <button id="btn-sim-bubble" type="button" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition cursor-pointer">
+            + Inject Air Bubble Spike
+          </button>
+
+          <!-- Toggle Simulated Water Flow Sensor Connected / Unplugged -->
+          <button id="btn-toggle-sim-sensor" type="button" class="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 transition flex items-center gap-1.5 cursor-pointer">
+            <span id="sim-sensor-btn-dot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span id="sim-sensor-btn-label">Sensor: Connected</span>
+          </button>
+        </div>
+
+        <div class="text-xs font-mono text-slate-400" id="sim-phase-label">
+          Ready • Target: 5.00 L
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Prominent Red Hardware Fault Alert Banner (Shown when Water Flow Sensor is Disconnected / Unplugged) -->
+  <div id="sensor-fault-banner" class="hidden max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 mt-4">
+    <div class="rounded-2xl bg-red-950/65 border-2 border-red-500 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-red-950/50">
+      <div class="flex items-start gap-3">
+        <div class="p-2 rounded-xl bg-red-500/25 text-red-400 shrink-0 mt-0.5 animate-pulse">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-extrabold text-red-200 tracking-wide uppercase" id="sensor-fault-title">
+            Flow Sensor Disconnected on GPIO 27 — Check 5V VCC, GND, and Signal wire
+          </h3>
+          <p class="text-xs text-red-100/85 mt-1 leading-relaxed" id="sensor-fault-desc">
+            Open-circuit fault detected (GPIO 27 pulled to 0V via 20kΩ divider). Volume accumulation has been safely paused until the Hall-effect flow sensor signal is restored.
+          </p>
+        </div>
+      </div>
+      <span class="shrink-0 px-3 py-1.5 rounded-xl text-xs font-mono font-bold bg-red-600 text-white border border-red-400 text-center">
+        ACCUMULATION PAUSED
+      </span>
+    </div>
+  </div>
+
+  <!-- Inline Web Bluetooth Compatibility / Permission Banner (Graceful Fallback) -->
+  <div id="ble-warning-banner" class="hidden max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 mt-4">
+    <div class="rounded-2xl bg-amber-950/40 border border-amber-500/40 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div class="flex items-start gap-3">
+        <div class="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0 mt-0.5">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-bold text-amber-200" id="ble-banner-title">Web Bluetooth Unavailable in Current Context</h3>
+          <p class="text-xs text-amber-100/80 mt-1 leading-relaxed" id="ble-banner-desc">
+            Your browser or embedded preview iframe restricts direct Bluetooth hardware access (Web Bluetooth requires Chrome/Edge/Bluefy over HTTPS in a top-level window). You can test all telemetry, sensor fault detection, and scam alerts right now using Simulator Mode.
+          </p>
+        </div>
+      </div>
+      <button id="btn-banner-demo" type="button" class="shrink-0 px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md transition cursor-pointer">
+        Launch Simulator Mode
+      </button>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT AREA -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 1: LIVE AUDIT & TELEMETRY DASHBOARD                              -->
+    <!-- ===================================================================== -->
+    <section id="view-dashboard" class="space-y-6">
+
+      <!-- Top Row: 4 Live Telemetry & Scam Verdict KPI Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5">
+
+        <!-- KPI 1: Measured Volume -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Measured Volume</span>
+            <div class="flex items-center gap-1.5">
+              <button id="btn-card-reset" type="button" class="px-2 py-1 rounded-lg text-[11px] font-mono bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer" title="Reset session counters">
+                Reset
+              </button>
+              <span class="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+
+          <div class="my-3">
+            <div class="flex items-baseline gap-2">
+              <span id="kpi-measured-liters" class="text-3xl sm:text-4xl font-bold font-mono tabular-nums text-white tracking-tight">0.000</span>
+              <span class="text-base font-mono font-semibold text-emerald-400">L</span>
+            </div>
+            <div class="mt-1 flex items-center justify-between text-xs font-mono text-slate-400">
+              <span id="kpi-measured-ml">0 mL</span>
+              <span id="kpi-volume-delta-inline">0 mL vs pump</span>
+            </div>
+          </div>
+
+          <!-- Progress Bar vs Billed Volume -->
+          <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+            <div id="kpi-volume-bar" class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-200" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- KPI 2: Flow Rate & Sensor Signal -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Flow Rate &amp; Signal</span>
+            <span class="p-2 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+            </span>
+          </div>
+
+          <div class="my-3">
+            <div class="flex items-baseline gap-2">
+              <span id="kpi-flow-rate" class="text-3xl sm:text-4xl font-bold font-mono tabular-nums text-white tracking-tight">0.00</span>
+              <span class="text-sm font-mono font-semibold text-sky-400">L/min</span>
+            </div>
+            <div class="mt-1 flex items-center justify-between text-xs font-mono text-slate-400">
+              <span id="kpi-pulse-hz">0.0 Hz</span>
+              <span id="kpi-total-pulses">0 pulses</span>
+            </div>
+          </div>
+
+          <!-- Inline Sensor Hardware Signal Status Indicator -->
+          <div class="flex items-center justify-between text-[11px] font-mono pt-1.5 border-t border-[#1F2937]">
+            <span class="text-slate-400">GPIO 27 Signal:</span>
+            <span id="kpi-gpio-signal-status" class="font-bold text-slate-400">Standby</span>
+          </div>
+        </div>
+
+        <!-- KPI 3: Pump Billed Volume & Fuel Price Inputs -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Pump Dispenser Bill</span>
+            <select id="currency-select" aria-label="Currency Symbol" class="text-xs font-mono bg-[#0B0F19] border border-[#1F2937] text-slate-300 rounded-lg px-2 py-0.5 focus:outline-none focus:border-emerald-500">
+              <option value="₹">INR (₹)</option>
+              <option value="$">USD ($)</option>
+              <option value="€">EUR (€)</option>
+              <option value="£">GBP (£)</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2.5 my-1">
+            <div>
+              <label for="input-billed-liters" class="block text-[11px] font-medium text-slate-400 mb-1">Pump Liters (L)</label>
+              <input id="input-billed-liters" type="number" step="0.01" min="0.1" value="5.00"
+                class="w-full px-2.5 py-2 rounded-xl bg-[#0B0F19] border border-[#1F2937] text-white font-mono font-bold text-base focus:outline-none focus:border-emerald-500 tabular-nums" />
+            </div>
+            <div>
+              <label for="input-fuel-price" class="block text-[11px] font-medium text-slate-400 mb-1">Price / Liter</label>
+              <input id="input-fuel-price" type="number" step="0.1" min="0" value="102.50"
+                class="w-full px-2.5 py-2 rounded-xl bg-[#0B0F19] border border-[#1F2937] text-white font-mono font-bold text-base focus:outline-none focus:border-emerald-500 tabular-nums" />
+            </div>
+          </div>
+
+          <!-- Quick Billed Volume Presets -->
+          <div class="flex items-center justify-between gap-1 mt-2 pt-2 border-t border-[#1F2937]">
+            <div class="flex items-center gap-1">
+              <button type="button" data-preset-liters="1" class="preset-liters-btn px-2 py-0.5 rounded-md text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer">1L</button>
+              <button type="button" data-preset-liters="2" class="preset-liters-btn px-2 py-0.5 rounded-md text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer">2L</button>
+              <button type="button" data-preset-liters="5" class="preset-liters-btn px-2 py-0.5 rounded-md text-[11px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 transition cursor-pointer">5L</button>
+              <button type="button" data-preset-liters="10" class="preset-liters-btn px-2 py-0.5 rounded-md text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 transition cursor-pointer">10L</button>
+            </div>
+            <span class="text-[11px] font-mono text-slate-400">Bill: <strong id="kpi-total-bill" class="text-slate-200">₹512.50</strong></span>
+          </div>
+        </div>
+
+        <!-- KPI 4: Discrepancy & Scam Verdict Card -->
+        <div id="verdict-card" class="glass-card rounded-2xl p-5 flex flex-col justify-between border transition-all duration-300">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Audit Verdict</span>
+            <span id="verdict-badge" class="px-2.5 py-1 rounded-lg text-[11px] font-extrabold tracking-wide uppercase bg-slate-800 text-slate-300 border border-slate-700">
+              AWAITING FLOW
+            </span>
+          </div>
+
+          <div class="my-3">
+            <div class="flex items-baseline justify-between gap-2">
+              <div>
+                <span id="kpi-diff-ml" class="text-2xl sm:text-3xl font-bold font-mono tabular-nums text-slate-200">0 mL</span>
+              </div>
+              <span id="kpi-diff-pct" class="text-base sm:text-lg font-bold font-mono tabular-nums text-slate-400">0.00%</span>
+            </div>
+            <p id="verdict-subtext" class="text-xs text-slate-400 mt-1">
+              Start pump dispense or simulator to compare against billed volume.
+            </p>
+          </div>
+
+          <div class="flex items-center justify-between text-xs font-mono pt-2 border-t border-slate-800/80">
+            <span class="text-slate-400">Financial Impact:</span>
+            <span id="kpi-financial-diff" class="font-bold text-slate-200">₹0.00</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Middle Row: Real-Time Flow Chart (2/3) + Calibration & Sensor Settings (1/3) -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        <!-- Real-Time Flow Rate Chart -->
+        <div class="lg:col-span-2 glass-card rounded-2xl p-5 flex flex-col">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <h2 class="text-base font-bold text-white flex items-center gap-2">
+                Real-Time Flow Rate Telemetry
+                <span id="anomaly-pill" class="hidden px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+                  AIR BUBBLE SPIKE DETECTED
+                </span>
+              </h2>
+              <p class="text-xs text-slate-400 mt-0.5">
+                Detects air-pocket surges, nozzle throttling, and mid-dispense pulse manipulation (L/min).
+              </p>
+            </div>
+            <div class="flex items-center gap-3 text-xs font-mono text-slate-400 shrink-0">
+              <span class="inline-flex items-center gap-1.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span> Flow (L/min)
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span class="w-2.5 h-0.5 bg-sky-400"></span> Avg Rate
+              </span>
+            </div>
+          </div>
+
+          <!-- Responsive Canvas Container -->
+          <div class="relative w-full h-64 sm:h-72 flex-1">
+            <canvas id="flowChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Calibration & Sensor Settings Panel -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <h2 class="text-base font-bold text-white">Sensor Calibration</h2>
+              <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">YF-S201 / Hall</span>
+            </div>
+            <p class="text-xs text-slate-400">
+              Adjust K-factor &amp; fluid viscosity multiplier. Recalculates live volume from raw pulse counts.
+            </p>
+          </div>
+
+          <div class="space-y-4">
+            <!-- Calibration Factor (Pulses per Liter) -->
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1.5">
+                <label for="input-cal-factor" class="font-semibold text-slate-300">K-Factor (Pulses / Liter)</label>
+                <span class="font-mono text-emerald-400 font-bold" id="cal-factor-display">450 P/L</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <input id="input-cal-factor" type="number" min="50" max="10000" step="1" value="450"
+                  class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white font-mono text-sm font-bold focus:outline-none focus:border-emerald-500 tabular-nums" />
+              </div>
+              <!-- Sensor Presets -->
+              <div class="flex flex-wrap gap-1.5 mt-2">
+                <button type="button" data-kfactor="450" class="kfactor-preset px-2 py-1 rounded-lg text-[11px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-pointer">
+                  YF-S201 (450)
+                </button>
+                <button type="button" data-kfactor="330" class="kfactor-preset px-2 py-1 rounded-lg text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer">
+                  YF-DN40 (330)
+                </button>
+                <button type="button" data-kfactor="5880" class="kfactor-preset px-2 py-1 rounded-lg text-[11px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer">
+                  YF-S401 (5880)
+                </button>
+              </div>
+            </div>
+
+            <!-- Viscosity / Fuel Offset Slider (-5% to +5%) -->
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1">
+                <label for="input-viscosity" class="font-semibold text-slate-300">Viscosity / Fuel Offset</label>
+                <span class="font-mono text-sky-400 font-bold" id="viscosity-display">0.0% (1.000×)</span>
+              </div>
+              <input id="input-viscosity" type="range" min="-5.0" max="5.0" step="0.5" value="0.0" class="w-full cursor-pointer" />
+              <div class="flex justify-between text-[10px] font-mono text-slate-500 mt-0.5">
+                <span>-5.0%</span>
+                <span>0.0% (Std)</span>
+                <span>+5.0%</span>
+              </div>
+            </div>
+
+            <!-- Raw Packet Inspector -->
+            <div class="rounded-xl bg-[#0B0F19] border border-[#1F2937] p-2.5">
+              <div class="flex items-center justify-between text-[10px] font-mono text-slate-500 mb-1">
+                <span>LAST TELEMETRY PACKET</span>
+                <span id="packet-rate-badge">0 pkt/s</span>
+              </div>
+              <code id="last-raw-packet" class="block text-[11px] font-mono text-emerald-300/90 truncate">
+                {"flow":0.00,"liters":0.000,"pulses":0,"sensor":true}
+              </code>
+            </div>
+          </div>
+
+          <button id="btn-sync-cal" type="button" class="w-full py-2.5 px-4 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center justify-center gap-2 cursor-pointer">
+            <svg class="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+              <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+            Apply &amp; Sync Calibration to ESP32
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Bottom Row: Refill Audit Log & CSV Export -->
+      <div class="glass-card rounded-2xl p-5 space-y-4">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+          <div>
+            <h2 class="text-base font-bold text-white">Refill Audit Log &amp; Evidence Export</h2>
+            <p class="text-xs text-slate-400 mt-0.5">
+              Record pump dispensing audits locally in your browser and export timestamped CSV reports.
+            </p>
+          </div>
+
+          <!-- Save Session Form + Export / Clear Actions -->
+          <div class="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2.5">
+            <input id="input-station-name" type="text" placeholder="Station / Pump No. (e.g., Shell Pump #2)"
+              class="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 min-w-[220px]" />
+
+            <button id="btn-save-record" type="button" class="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              </svg>
+              Save Refill Record
+            </button>
+
+            <button id="btn-export-csv" type="button" class="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <svg class="w-4 h-4 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Export CSV
+            </button>
+
+            <button id="btn-clear-log" type="button" class="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 transition flex items-center justify-center gap-1.5 cursor-pointer">
+              Clear Log
+            </button>
+          </div>
+        </div>
+
+        <!-- Responsive Audit Table -->
+        <div class="overflow-x-auto rounded-xl border border-[#1F2937]">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="bg-[#0B0F19] text-[11px] font-semibold uppercase tracking-wider text-slate-400 border-b border-[#1F2937]">
+                <th class="py-3 px-4">Date &amp; Time</th>
+                <th class="py-3 px-4">Station / Pump</th>
+                <th class="py-3 px-4 text-right">Billed (L)</th>
+                <th class="py-3 px-4 text-right">Measured (L)</th>
+                <th class="py-3 px-4 text-right">Variance</th>
+                <th class="py-3 px-4 text-right">Financial Diff</th>
+                <th class="py-3 px-4">Sensor Health</th>
+                <th class="py-3 px-4">Verdict</th>
+                <th class="py-3 px-4 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody id="audit-log-tbody" class="divide-y divide-[#1F2937] text-xs sm:text-sm font-mono">
+              <!-- Populated via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- VIEW 2: ESP32 ARDUINO FIRMWARE & HARDWARE WIRING GUIDE                -->
+    <!-- ===================================================================== -->
+    <section id="view-firmware" class="hidden space-y-6">
+
+      <!-- Safety & Hardware Engineering Notice -->
+      <div class="rounded-2xl bg-rose-950/35 border border-rose-500/40 p-4 sm:p-5 flex items-start gap-3.5">
+        <div class="p-2.5 rounded-xl bg-rose-500/20 text-rose-400 shrink-0">
+          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+        </div>
+        <div class="space-y-1">
+          <h3 class="text-sm sm:text-base font-bold text-rose-200">Important Fuel Safety &amp; Sensor Material Advisory</h3>
+          <p class="text-xs sm:text-sm text-rose-100/80 leading-relaxed">
+            Standard <strong>YF-S201</strong> water flow sensors use nylon/polypropylene housings intended for <strong>bench testing with water</strong>. For real petrol/gasoline auditing, use a <strong>fuel-rated aluminum/acetal/stainless turbine flow sensor</strong> (e.g., FS300A Fuel Edition or ATEX-certified inline flowmeter) with Viton/FKM seals and an intrinsically safe, spark-free enclosure.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Left Column: Wiring Diagram & Pinout Guide -->
+        <div class="glass-card rounded-2xl p-5 space-y-5">
+          <div>
+            <h2 class="text-base font-bold text-white">ESP32 + Flow Sensor Pinout</h2>
+            <p class="text-xs text-slate-400 mt-0.5">
+              10kΩ / 20kΩ divider safely steps 5V pulses to 3.3V AND pulls GPIO 27 to 0V when unplugged for open-circuit detection.
+            </p>
+          </div>
+
+          <!-- Clean SVG Wiring Schematic -->
+          <div class="rounded-xl bg-[#0B0F19] border border-[#1F2937] p-4">
+            <svg viewBox="0 0 360 220" class="w-full h-auto font-mono text-[10px]">
+              <!-- ESP32 Board Box -->
+              <rect x="12" y="18" width="116" height="175" rx="10" fill="#111827" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="70" y="40" fill="#38bdf8" font-weight="bold" text-anchor="middle" font-size="11">ESP32 DEVKIT</text>
+              <rect x="32" y="50" width="76" height="36" rx="4" fill="#0B0F19" stroke="#374151"/>
+              <text x="70" y="71" fill="#94a3b8" text-anchor="middle" font-size="9">BLE 4.2/5.0</text>
+
+              <!-- ESP32 Pins -->
+              <circle cx="120" cy="108" r="4" fill="#ef4444"/><text x="110" y="111" fill="#fca5a5" text-anchor="end">VIN (5V)</text>
+              <circle cx="120" cy="138" r="4" fill="#94a3b8"/><text x="110" y="141" fill="#cbd5e1" text-anchor="end">GND</text>
+              <circle cx="120" cy="168" r="4" fill="#10b981"/><text x="110" y="171" fill="#6ee7b7" text-anchor="end">GPIO 27</text>
+
+              <!-- Flow Sensor Box -->
+              <rect x="246" y="52" width="102" height="126" rx="10" fill="#111827" stroke="#10b981" stroke-width="1.5"/>
+              <text x="297" y="75" fill="#10b981" font-weight="bold" text-anchor="middle" font-size="11">FLOW SENSOR</text>
+              <text x="297" y="89" fill="#94a3b8" text-anchor="middle" font-size="9">(YF-S201 Hall)</text>
+
+              <circle cx="254" cy="108" r="4" fill="#ef4444"/><text x="264" y="111" fill="#fca5a5">VCC (Red)</text>
+              <circle cx="254" cy="138" r="4" fill="#94a3b8"/><text x="264" y="141" fill="#cbd5e1">GND (Blk)</text>
+              <circle cx="254" cy="168" r="4" fill="#f59e0b"/><text x="264" y="171" fill="#fcd34d">SIG (Yel)</text>
+
+              <!-- Wires -->
+              <line x1="124" y1="108" x2="250" y2="108" stroke="#ef4444" stroke-width="2"/>
+              <line x1="124" y1="138" x2="250" y2="138" stroke="#64748b" stroke-width="2"/>
+
+              <!-- Voltage Divider on Signal Line -->
+              <line x1="124" y1="168" x2="178" y2="168" stroke="#10b981" stroke-width="2"/>
+              <circle cx="154" cy="168" r="2.5" fill="#10b981"/>
+              <rect x="178" y="161" width="36" height="14" rx="3" fill="#0B0F19" stroke="#f59e0b"/>
+              <text x="196" y="171" fill="#fcd34d" text-anchor="middle" font-size="8">10kΩ</text>
+              <line x1="214" y1="168" x2="250" y2="168" stroke="#f59e0b" stroke-width="2"/>
+
+              <!-- 20kΩ Pull-down to GND -->
+              <line x1="154" y1="168" x2="154" y2="138" stroke="#94a3b8" stroke-width="1.5"/>
+              <rect x="137" y="146" width="34" height="12" rx="2" fill="#0B0F19" stroke="#64748b"/>
+              <text x="154" y="155" fill="#cbd5e1" text-anchor="middle" font-size="7.5">20kΩ</text>
+              <text x="180" y="198" fill="#6ee7b7" text-anchor="middle" font-size="8">3.3V Logic + 0V Unplugged Pull-Down</text>
+            </svg>
+          </div>
+
+          <!-- Pinout Table -->
+          <div class="overflow-hidden rounded-xl border border-[#1F2937]">
+            <table class="w-full text-xs">
+              <thead class="bg-[#0B0F19] text-slate-400">
+                <tr>
+                  <th class="py-2 px-3 text-left">Sensor Wire</th>
+                  <th class="py-2 px-3 text-left">ESP32 Pin</th>
+                  <th class="py-2 px-3 text-left">Notes</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[#1F2937] font-mono">
+                <tr>
+                  <td class="py-2 px-3 text-red-400">VCC (Red)</td>
+                  <td class="py-2 px-3 text-white">VIN / 5V</td>
+                  <td class="py-2 px-3 text-slate-400 font-sans">Hall sensor 5V supply</td>
+                </tr>
+                <tr>
+                  <td class="py-2 px-3 text-slate-300">GND (Black)</td>
+                  <td class="py-2 px-3 text-white">GND</td>
+                  <td class="py-2 px-3 text-slate-400 font-sans">Common ground</td>
+                </tr>
+                <tr>
+                  <td class="py-2 px-3 text-amber-400">Signal (Yellow)</td>
+                  <td class="py-2 px-3 text-emerald-400">GPIO 27</td>
+                  <td class="py-2 px-3 text-slate-400 font-sans">10kΩ/20kΩ divider + 0V detect</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="rounded-xl bg-slate-900/90 border border-slate-800 p-3 text-xs space-y-1.5 font-mono">
+            <div class="text-slate-400 font-sans font-semibold">BLE GATT Profile UUIDs:</div>
+            <div class="text-sky-400 break-all">Service: 4fafc201-1fb5-459e-8fcc-c5c9c331914b</div>
+            <div class="text-emerald-400 break-all">Notify TX: beb5483e-36e1-4688-b7f5-ea07361b26a8</div>
+          </div>
+        </div>
+
+        <!-- Right Column (2/3): Complete Arduino C++ Firmware Code -->
+        <div class="lg:col-span-2 glass-card rounded-2xl p-5 flex flex-col">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 class="text-base font-bold text-white">FuelGuard_ESP32_BLE.ino (Arduino C++)</h2>
+              <p class="text-xs text-slate-400 mt-0.5">
+                Interrupt-driven pulse counter with GPIO 27 open-circuit detection and JSON BLE notifications.
+              </p>
+            </div>
+            <button id="btn-copy-code" type="button" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition flex items-center gap-2 self-start sm:self-auto cursor-pointer">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <span id="copy-code-label">Copy Code</span>
+            </button>
+          </div>
+
+          <div class="relative flex-1 rounded-xl bg-[#0B0F19] border border-[#1F2937] overflow-hidden">
+            <pre class="p-4 overflow-x-auto text-xs font-mono leading-relaxed text-slate-200 max-h-[540px]"><code id="esp32-arduino-code">/*
+ * FuelGuard BLE — ESP32 Liquid Flow &amp; Petrol Pump Auditor Firmware
+ * Hardware: ESP32 DevKit + YF-S201 (or fuel-rated Hall turbine flow sensor)
+ * Wiring:
+ *   - Sensor VCC (Red)    -&gt; ESP32 VIN (5V)
+ *   - Sensor GND (Black)  -&gt; ESP32 GND
+ *   - Sensor SIG (Yellow) -&gt; ESP32 GPIO 27 via 10k/20k 5V-&gt;3.3V voltage divider
+ *     (20k pull-down pulls GPIO 27 to 0V when unplugged for open-circuit fault detection)
+ */
+
+#include &lt;BLEDevice.h&gt;
+#include &lt;BLEServer.h&gt;
+#include &lt;BLEUtils.h&gt;
+#include &lt;BLE2902.h&gt;
+
+// BLE Service &amp; Characteristic UUIDs (Matches FuelGuard BLE Web App)
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+
+// Flow Sensor Configuration
+const uint8_t FLOW_SENSOR_PIN = 27;
+float calibrationFactor = 450.0; // Default: 450 pulses per liter for YF-S201
+float viscosityMultiplier = 1.00;
+
+volatile uint32_t totalPulses = 0;
+volatile uint32_t intervalPulses = 0;
+volatile unsigned long lastSensorHighMs = 0;
+
+unsigned long lastReportTime = 0;
+const unsigned long REPORT_INTERVAL_MS = 500; // Broadcast every 500ms
+const unsigned long SENSOR_DISCONNECT_TIMEOUT_MS = 400; // 0V open-circuit threshold
+
+BLEServer* pServer = nullptr;
+BLECharacteristic* pCharacteristic = nullptr;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+// Hardware Interrupt Service Routine (ISR) on rising edge
+void IRAM_ATTR onFlowPulse() {
+  totalPulses++;
+  intervalPulses++;
+  lastSensorHighMs = millis();
+}
+
+// BLE Server Connection Callbacks
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) override {
+    deviceConnected = true;
+    Serial.println("[BLE] FuelGuard Web Client Connected");
+  }
+  void onDisconnect(BLEServer* pServer) override {
+    deviceConnected = false;
+    Serial.println("[BLE] Client Disconnected");
+  }
+};
+
+// Handle commands from FuelGuard Web App ("RESET" or "CAL:450,1.00")
+class CharacteristicCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pChar) override {
+    String rxValue = pChar-&gt;getValue().c_str();
+    rxValue.trim();
+    if (rxValue.length() &gt; 0) {
+      Serial.print("[BLE RX] Command: ");
+      Serial.println(rxValue);
+
+      if (rxValue.equalsIgnoreCase("RESET")) {
+        noInterrupts();
+        totalPulses = 0;
+        intervalPulses = 0;
+        interrupts();
+        Serial.println("[SENSOR] Counters zeroed.");
+      } else if (rxValue.startsWith("CAL:")) {
+        int commaIdx = rxValue.indexOf(',');
+        if (commaIdx &gt; 4) {
+          float newK = rxValue.substring(4, commaIdx).toFloat();
+          float newVisc = rxValue.substring(commaIdx + 1).toFloat();
+          if (newK &gt; 10.0) calibrationFactor = newK;
+          if (newVisc &gt; 0.1) viscosityMultiplier = newVisc;
+          Serial.printf("[SENSOR] Updated K=%.1f, Visc=%.3f\n", calibrationFactor, viscosityMultiplier);
+        }
+      }
+    }
+  }
+};
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("\nStarting FuelGuard BLE Flow Auditor...");
+
+  // External 20k pull-down holds GPIO 27 LOW (0V) when sensor is unplugged
+  pinMode(FLOW_SENSOR_PIN, INPUT);
+  if (digitalRead(FLOW_SENSOR_PIN) == HIGH) {
+    lastSensorHighMs = millis();
+  }
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), onFlowPulse, RISING);
+
+  // Initialize BLE Device
+  BLEDevice::init("FuelGuard-ESP32");
+  pServer = BLEDevice::createServer();
+  pServer-&gt;setCallbacks(new ServerCallbacks());
+
+  BLEService* pService = pServer-&gt;createService(SERVICE_UUID);
+
+  pCharacteristic = pService-&gt;createCharacteristic(
+    CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_NOTIFY |
+    BLECharacteristic::PROPERTY_WRITE |
+    BLECharacteristic::PROPERTY_WRITE_NR
+  );
+
+  pCharacteristic-&gt;addDescriptor(new BLE2902());
+  pCharacteristic-&gt;setCallbacks(new CharacteristicCallbacks());
+
+  pService-&gt;start();
+
+  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising-&gt;addServiceUUID(SERVICE_UUID);
+  pAdvertising-&gt;setScanResponse(true);
+  pAdvertising-&gt;setMinPreferred(0x06);
+  BLEDevice::startAdvertising();
+
+  Serial.println("[BLE] Advertising as 'FuelGuard-ESP32'...");
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // Check if Hall sensor signal is present (HIGH idle or active pulses)
+  if (digitalRead(FLOW_SENSOR_PIN) == HIGH) {
+    lastSensorHighMs = now;
+  }
+  bool sensorConnected = (lastSensorHighMs &gt; 0) &amp;&amp; ((now - lastSensorHighMs) &lt; SENSOR_DISCONNECT_TIMEOUT_MS);
+
+  if (now - lastReportTime &gt;= REPORT_INTERVAL_MS) {
+    float elapsedSec = (now - lastReportTime) / 1000.0;
+    lastReportTime = now;
+
+    // Atomically snapshot pulse counts
+    noInterrupts();
+    uint32_t pulsesSnapshot = totalPulses;
+    uint32_t deltaPulses = intervalPulses;
+    intervalPulses = 0;
+    interrupts();
+
+    // Calculate Flow Rate (L/min) &amp; Total Dispensed Volume (Liters)
+    float pulseFreqHz = sensorConnected ? (deltaPulses / elapsedSec) : 0.0;
+    float flowRateLPM = sensorConnected ? (((pulseFreqHz * 60.0) / calibrationFactor) * viscosityMultiplier) : 0.0;
+    float totalLiters = (pulsesSnapshot / calibrationFactor) * viscosityMultiplier;
+
+    // Format JSON telemetry packet with "sensor" health boolean
+    char jsonPayload[144];
+    snprintf(
+      jsonPayload,
+      sizeof(jsonPayload),
+      "{\"flow\":%.2f,\"liters\":%.3f,\"pulses\":%lu,\"sensor\":%s}",
+      flowRateLPM,
+      totalLiters,
+      (unsigned long)pulsesSnapshot,
+      sensorConnected ? "true" : "false"
+    );
+
+    Serial.println(jsonPayload);
+
+    if (deviceConnected) {
+      pCharacteristic-&gt;setValue((uint8_t*)jsonPayload, strlen(jsonPayload));
+      pCharacteristic-&gt;notify();
+    }
+  }
+
+  // Re-advertise automatically after disconnect
+  if (!deviceConnected &amp;&amp; oldDeviceConnected) {
+    delay(300);
+    pServer-&gt;startAdvertising();
+    Serial.println("[BLE] Restarted advertising...");
+    oldDeviceConnected = deviceConnected;
+  }
+  if (deviceConnected &amp;&amp; !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+}</code></pre>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Subtle Technical Footer -->
+  <footer class="border-t border-slate-800/80 bg-slate-950/80 py-4 px-4 sm:px-6 lg:px-8 mt-auto">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500 font-mono">
+      <div>FuelGuard BLE • Web Bluetooth Telemetry &amp; Pump Short-Dispense Auditor</div>
+      <div>Tolerance Thresholds: ±1.5% Accurate | -1.5% to -3.0% Minor | &lt; -3.0% Scam Alert</div>
+    </div>
+  </footer>
+
+  <!-- ===================================================================== -->
+  <!-- APPLICATION JAVASCRIPT (BLE, SIMULATOR, CHART.JS, AUDIT LOG)          -->
+  <!-- ===================================================================== -->
+  <script>
+  (() => {
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const state = { simOpen:false, running:false, sensor:true, scam:false, bubble:0, liters:0, pulses:0, flow:0, peak:0, chart:null, timer:null, records:[], device:null, server:null, characteristic:null, writeChar:null, calibration:450, viscosity:1, currency:'₹' };
+    const SERVICE='4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+    const CHARACTERISTIC='beb5483e-36e1-4688-b7f5-ea07361b26a8';
+    const toast=(msg,type='info')=>{const box=$('toast-container');if(!box)return;const d=document.createElement('div');d.className='pointer-events-auto rounded-xl border px-4 py-3 text-xs font-medium shadow-2xl bg-slate-900 text-slate-100 border-slate-700';d.textContent=msg;box.appendChild(d);setTimeout(()=>d.remove(),3500)};
+    const num=(id,fallback=0)=>{const v=parseFloat($(id)?.value);return Number.isFinite(v)?v:fallback};
+    const setText=(id,v)=>{if($(id))$(id).textContent=v};
+    function updateSensor(){
+      const disconnected=!state.sensor;
+      $('sensor-fault-banner')?.classList.toggle('hidden',!disconnected);
+      $('sensor-status-text') && ( $('sensor-status-text').textContent=disconnected?'Flow Sensor: Disconnected':(state.simOpen?'Flow Sensor: Connected':'Flow Sensor: Standby'));
+      $('sensor-pill-dot')?.classList.toggle('bg-red-500',disconnected);
+      $('sensor-pill-dot')?.classList.toggle('bg-emerald-400',!disconnected);
+      $('sensor-wave-icon')?.classList.toggle('hidden',disconnected);
+      $('sensor-warn-icon')?.classList.toggle('hidden',!disconnected);
+      setText('sim-sensor-btn-label',`Sensor: ${state.sensor?'Connected':'Unplugged'}`);
+      $('sim-sensor-btn-dot')?.classList.toggle('bg-emerald-400',state.sensor);
+      $('sim-sensor-btn-dot')?.classList.toggle('bg-red-400',!state.sensor);
+    }
+    function updateVerdict(){
+      const billed=num('input-billed-liters',5), price=num('input-fuel-price',102.5), diff=state.liters-billed, pct=billed?diff/billed*100:0;
+      setText('kpi-total-bill',`${state.currency}${(billed*price).toFixed(2)}`);
+      setText('kpi-diff-ml',`${Math.round(diff*1000)} mL`); setText('kpi-diff-pct',`${pct.toFixed(2)}%`);
+      setText('kpi-financial-diff',`${state.currency}${(Math.abs(diff)*price).toFixed(2)}`);
+      const badge=$('verdict-badge'),card=$('verdict-card');
+      if(badge){badge.textContent=pct>=-1.5?'WITHIN TOLERANCE':pct>=-3?'MINOR VARIANCE':'SCAM ALERT: SHORT DISPENSED';badge.className='px-2.5 py-1 rounded-lg text-[11px] font-extrabold tracking-wide uppercase '+(pct>=-1.5?'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40':pct>=-3?'bg-amber-500/20 text-amber-300 border border-amber-500/40':'bg-red-600 text-white border border-red-400')}
+      if(card){card.classList.remove('border-emerald-500/60','border-amber-500/60','border-red-500','animate-pulse-fast');card.classList.add(pct>=-1.5?'border-emerald-500/60':pct>=-3?'border-amber-500/60':'border-red-500')}
+      setText('verdict-subtext',pct>=-1.5?'Measured volume is within the accepted tolerance.':pct>=-3?'Slight short dispense. Monitor pump consistency.':'Critical: measured fuel is more than 3% below the billed quantity.');
+      setText('kpi-volume-delta-inline',`${diff>=0?'+':''}${diff.toFixed(3)} L`);
+      const bar=$('kpi-volume-bar');if(bar)bar.style.width=`${Math.max(0,Math.min(100,(state.liters/Math.max(billed,0.01))*100))}%`;
+    }
+    function render(){
+      setText('kpi-measured-liters',state.liters.toFixed(3));setText('kpi-measured-ml',`${(state.liters*1000).toFixed(0)} mL`);
+      setText('kpi-flow-rate',`${state.flow.toFixed(2)} L/min`);setText('kpi-pulse-hz',`${(state.flow*state.calibration/60).toFixed(1)} Hz`);setText('kpi-total-pulses',state.pulses.toLocaleString());setText('kpi-gpio-signal-status',state.sensor?'SIGNAL OK':'FAULT / LOW');
+      updateVerdict();updateSensor();
+      if(state.chart){const c=state.chart;c.data.labels.push(new Date().toLocaleTimeString());c.data.datasets[0].data.push(state.flow);if(c.data.labels.length>45){c.data.labels.shift();c.data.datasets[0].data.shift()}c.update('none')}
+      $('anomaly-pill')?.classList.toggle('hidden',state.bubble<=0);
+    }
+    function addRecord(){const billed=num('input-billed-liters',5), price=num('input-fuel-price',102.5), diff=state.liters-billed, pct=billed?diff/billed*100:0;const rec={date:new Date().toLocaleString(),station:$('input-station-name')?.value||'Demo Station',billed,measured:state.liters,variance:pct,financial:Math.abs(diff)*price,health:state.sensor?'Healthy':'Fault',verdict:pct>=-1.5?'PASS':pct>=-3?'CHECK':'ALERT'};state.records.unshift(rec);const body=$('audit-log-tbody');if(body){const tr=document.createElement('tr');tr.className='border-b border-slate-800';[rec.date,rec.station,billed.toFixed(2),rec.measured.toFixed(3),`${pct.toFixed(2)}%`,`${state.currency}${rec.financial.toFixed(2)}`,rec.health,rec.verdict].forEach((v,i)=>{const td=document.createElement('td');td.className='py-3 px-4 '+(i===2||i===3||i===4||i===5?'text-right':'');td.textContent=v;tr.appendChild(td)});const td=document.createElement('td');td.className='py-3 px-4 text-center';const b=document.createElement('button');b.textContent='View';b.className='text-sky-400';b.onclick=()=>toast(`${rec.station}: ${rec.measured.toFixed(3)} L measured`);td.appendChild(b);tr.appendChild(td);body.prepend(tr)}try{localStorage.setItem('fuelguard_audit_log_v1',JSON.stringify(state.records))}catch{}toast('Refill audit record saved.','success')}
+    function reset(silent=false){state.liters=0;state.pulses=0;state.flow=0;state.peak=0;state.bubble=0;if(state.chart){state.chart.data.labels=[];state.chart.data.datasets.forEach(d=>d.data=[]);state.chart.update('none')}render();if(!silent)toast('Session counters reset.');}
+    function simTick(){if(!state.running)return;if(!state.sensor){state.flow=0;render();return}let base=18+Math.sin(Date.now()/900)*2+(Math.random()*2-1);if(state.bubble>0){base+=35;state.bubble--}state.flow=Math.max(0,base);state.peak=Math.max(state.peak,state.flow);const delivered=state.flow/60/10;state.liters+=delivered*(state.scam?0.92:1);state.pulses=Math.round(state.liters*state.calibration/state.viscosity);setText('sim-phase-label',`Running • Target: ${num('input-billed-liters',5).toFixed(2)} L`);render()}
+    function openSim(){state.simOpen=!state.simOpen;$('simulator-bar')?.classList.toggle('hidden',!state.simOpen);setText('btn-simulate-label',state.simOpen?'Close Simulator':'Simulator Mode');if(state.simOpen){$('ble-warning-banner')?.classList.add('hidden');toast('Simulator ready. Press Start Pump to begin.','success')}else{pauseSim()}}
+    function startSim(){if(!state.simOpen)openSim();state.running=true;clearInterval(state.timer);state.timer=setInterval(simTick,500);toast('Pump simulation started.','success')}
+    function pauseSim(){state.running=false;clearInterval(state.timer);state.timer=null;state.flow=0;render();toast('Pump simulation paused.')}
+    async function connectBle(){
+      if(state.device?.gatt?.connected){state.device.gatt.disconnect();return}
+      if(!navigator.bluetooth){$('ble-warning-banner')?.classList.remove('hidden');toast('Web Bluetooth is unavailable. Open this page in Chrome or Edge using HTTPS or localhost.','warning');return}
+      try{state.device=await navigator.bluetooth.requestDevice({filters:[{services:[SERVICE]}],optionalServices:[SERVICE]});state.device.addEventListener('gattserverdisconnected',()=>{setText('conn-status-text','BLE: Disconnected');setText('btn-connect-label','Connect ESP32');$('conn-dot')?.classList.replace('bg-emerald-400','bg-slate-500');toast('ESP32 disconnected.','warning')});state.server=await state.device.gatt.connect();const service=await state.server.getPrimaryService(SERVICE);state.characteristic=await service.getCharacteristic(CHARACTERISTIC);state.writeChar=state.characteristic;await state.characteristic.startNotifications();state.characteristic.addEventListener('characteristicvaluechanged',e=>{const v=new TextDecoder().decode(e.target.value);setText('last-raw-packet',v);try{const d=JSON.parse(v);state.flow=Number(d.flow)||0;state.liters=Number(d.liters)||0;state.pulses=Number(d.pulses)||0;state.sensor=d.sensor!==false;render()}catch{}});setText('conn-status-text','BLE: Connected');setText('btn-connect-label','Disconnect ESP32');$('conn-dot')?.classList.replace('bg-slate-500','bg-emerald-400');setText('device-name-badge',state.device.name||'ESP32');$('device-name-badge')?.classList.remove('hidden');toast('Connected to ESP32.','success')}
+      catch(e){toast(e?.message||'Bluetooth connection failed.','error')}
+    }
+    async function sendCommand(command){if(!state.writeChar){toast('Connect ESP32 first.','warning');return}try{await state.writeChar.writeValue(new TextEncoder().encode(command));toast('Command sent to ESP32.','success')}catch(e){toast('Could not send command: '+e.message,'error')}}
+    function downloadCsv(){const rows=[['Date & Time','Station','Billed (L)','Measured (L)','Variance (%)','Financial Diff','Sensor Health','Verdict'],...state.records.map(r=>[r.date,r.station,r.billed,r.measured,r.variance,r.financial,r.health,r.verdict])];const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='fuelguard-audit.csv';a.click();URL.revokeObjectURL(a.href);toast('CSV exported.','success')}
+    function init(){
+      document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{const tab=b.dataset.tab;$('view-dashboard')?.classList.toggle('hidden',tab!=='dashboard');$('view-firmware')?.classList.toggle('hidden',tab!=='firmware');document.querySelectorAll('[data-tab]').forEach(x=>{x.classList.toggle('text-white',x===b);x.classList.toggle('text-slate-400',x!==b)})}));
+      $('btn-connect-ble')?.addEventListener('click',connectBle);$('btn-simulate')?.addEventListener('click',openSim);$('btn-banner-demo')?.addEventListener('click',()=>{if(!state.simOpen)openSim();$('ble-warning-banner')?.classList.add('hidden')});$('btn-sim-start')?.addEventListener('click',startSim);$('btn-sim-pause')?.addEventListener('click',pauseSim);$('btn-reset')?.addEventListener('click',()=>reset());$('btn-card-reset')?.addEventListener('click',()=>reset());$('btn-sim-bubble')?.addEventListener('click',()=>{state.bubble=3;toast('Air bubble spike injected.','warning')});$('btn-toggle-sim-sensor')?.addEventListener('click',()=>{state.sensor=!state.sensor;updateSensor();toast(state.sensor?'Simulated sensor reconnected.':'Simulated sensor unplugged.',state.sensor?'success':'warning')});$('toggle-sim-scam')?.addEventListener('change',e=>{state.scam=e.target.checked;toast(state.scam?'Short-dispense simulation enabled (-8%).':'Short-dispense simulation disabled.')});
+      $('input-billed-liters')?.addEventListener('input',updateVerdict);$('input-fuel-price')?.addEventListener('input',updateVerdict);$('currency-select')?.addEventListener('change',e=>{state.currency=e.target.value.includes('USD')?'$':e.target.value.includes('EUR')?'€':e.target.value.includes('GBP')?'£':'₹';updateVerdict()});
+      document.querySelectorAll('.preset-liters-btn').forEach(b=>b.addEventListener('click',()=>{const v=b.dataset.liters||b.dataset.value||b.textContent.match(/[\d.]+/)?.[0];if(v){$('input-billed-liters').value=parseFloat(v);updateVerdict()}}));
+      $('input-cal-factor')?.addEventListener('input',e=>{state.calibration=Math.max(1,Number(e.target.value)||450);setText('cal-factor-display',state.calibration)});$('input-viscosity')?.addEventListener('input',e=>{state.viscosity=Number(e.target.value)||1;setText('viscosity-display',state.viscosity.toFixed(2))});document.querySelectorAll('.kfactor-preset').forEach(b=>b.addEventListener('click',()=>{const v=b.dataset.factor||b.textContent.match(/[\d.]+/)?.[0];if(v){$('input-cal-factor').value=parseFloat(v);$('input-cal-factor').dispatchEvent(new Event('input'))}}));$('btn-sync-cal')?.addEventListener('click',()=>sendCommand(`CAL:${state.calibration},${state.viscosity.toFixed(2)}`));
+      $('btn-save-record')?.addEventListener('click',addRecord);$('btn-export-csv')?.addEventListener('click',downloadCsv);$('btn-clear-log')?.addEventListener('click',()=>{if(!confirm('Clear all audit records?'))return;state.records=[];$('audit-log-tbody').innerHTML='';try{localStorage.removeItem('fuelguard_audit_log_v1')}catch{}toast('Audit log cleared.')});$('btn-copy-code')?.addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('esp32-arduino-code')?.textContent||'');setText('copy-code-label','Copied!');toast('Firmware code copied.','success');setTimeout(()=>setText('copy-code-label','Copy Code'),1800)}catch{toast('Clipboard access unavailable. Select and copy the code manually.','warning')}});
+      if(typeof Chart!=='undefined'&&$('flowChart')){state.chart=new Chart($('flowChart'),{type:'line',data:{labels:[],datasets:[{label:'Flow Rate (L/min)',data:[],borderColor:'#10b981',backgroundColor:'rgba(16,185,129,.14)',fill:true,tension:.3,pointRadius:1}]},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#64748b',maxTicksLimit:6}},y:{beginAtZero:true,ticks:{color:'#64748b'}}}}})}
+      try{const saved=JSON.parse(localStorage.getItem('fuelguard_audit_log_v1')||'[]');if(Array.isArray(saved))state.records=saved}catch{};render();
+      if(!navigator.bluetooth)$('ble-warning-banner')?.classList.remove('hidden');
+    }
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+  })();
+  </script>
+</body>
+</html>
